@@ -821,11 +821,16 @@ export function useOpsExpenses(month: string) {
   return useQuery({
     queryKey: ['ops_expenses', month],
     queryFn: async () => {
+      const [year, monthNumber] = month.split('-').map(Number)
+      const nextMonth = monthNumber === 12
+        ? `${year + 1}-01`
+        : `${year}-${String(monthNumber + 1).padStart(2, '0')}`
+
       const { data, error } = await supabase
         .from('ops_expenses')
         .select('*')
         .gte('date', `${month}-01`)
-        .lte('date', `${month}-31`)
+        .lt('date', `${nextMonth}-01`)
         .order('date', { ascending: false })
       if (error) throw error
       return data as OpsExpense[]
