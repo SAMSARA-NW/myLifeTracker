@@ -856,24 +856,6 @@ export function useCreateOpsExpense() {
   })
 }
 
-/** Update one expense and refresh every currently visible month. */
-export function useUpdateOpsExpense() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: async ({ id, ...updates }: Pick<OpsExpense, 'id'> & Partial<Omit<OpsExpense, 'id' | 'created_at'>>) => {
-      const { data, error } = await supabase
-        .from('ops_expenses')
-        .update(updates)
-        .eq('id', id)
-        .select()
-        .single()
-      if (error) throw error
-      return data as OpsExpense
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['ops_expenses'] }),
-  })
-}
-
 
 /** Delete one expense and refresh every currently visible month. */
 export function useDeleteOpsExpense() {

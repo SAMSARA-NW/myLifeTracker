@@ -9,9 +9,7 @@ import {
   useFinEntries,
   useOpsExpenseCategories,
   useOpsExpenses,
-  useUpdateOpsExpense,
 } from '../../lib/queries'
-import type { OpsExpense } from '../../lib/supabase'
 
 const FALLBACK_CATEGORIES = [
   { id: 'food', name: 'FOOD', color: '#8a6a3a', is_builtin: true },
@@ -52,7 +50,6 @@ export function ExpenseTracker() {
   const [formAccount, setFormAccount] = useState<'personal' | 'business'>('personal')
   const [formDescription, setFormDescription] = useState('')
   const [newCategory, setNewCategory] = useState('')
-  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
@@ -60,7 +57,6 @@ export function ExpenseTracker() {
   const { data: entries = [] } = useFinEntries()
   const { data: savedCategories } = useOpsExpenseCategories()
   const createExpense = useCreateOpsExpense()
-  const updateExpense = useUpdateOpsExpense()
   const deleteExpense = useDeleteOpsExpense()
   const createCategory = useCreateOpsExpenseCategory()
   const deleteCategory = useDeleteOpsExpenseCategory()
@@ -82,47 +78,13 @@ export function ExpenseTracker() {
     [expenses, logAccount],
   )
 
-  function resetExpenseForm() {
-    setEditingExpenseId(null)
-    setFormDate(format(new Date(), 'yyyy-MM-dd'))
-    setFormAmount('')
-    setFormCategory('FOOD')
-    setFormAccount('personal')
-    setFormDescription('')
-  }
-
-  function openAddExpenseForm() {
-    if (showForm && !editingExpenseId) {
-      setShowForm(false)
-      resetExpenseForm()
-      return
-    }
-    resetExpenseForm()
-    setErrorMessage('')
-    setShowForm(true)
-  }
-
-  function openEditExpenseForm(expense: OpsExpense) {
-    setEditingExpenseId(expense.id)
-    setFormDate(expense.date)
-    setFormAmount(String(expense.amount))
-    setFormCategory(expense.category)
-    setFormAccount(expense.account_type || 'personal')
-    setFormDescription(expense.description)
-    setErrorMessage('')
-    setShowForm(true)
-  }
-
-  async function handleSaveExpense(event: React.FormEvent) {
+  async function handleAddExpense(event: React.FormEvent) {
     event.preventDefault()
     if (!formAmount || !formDescription.trim()) return
     setSubmitting(true); setErrorMessage('')
     try {
-      const values = { amount: Number(formAmount), category: formCategory, account_type: formAccount, description: formDescription.trim(), date: formDate }
-      if (editingExpenseId) await updateExpense.mutateAsync({ id: editingExpenseId, ...values })
-      else await createExpense.mutateAsync(values)
-      resetExpenseForm()
-      setShowForm(false)
+      await createExpense.mutateAsync({ amount: Number(formAmount), category: formCategory, account_type: formAccount, description: formDescription.trim(), date: formDate })
+      setFormAmount(''); setFormDescription(''); setShowForm(false)
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Could not save expense.') }
     finally { setSubmitting(false) }
   }
@@ -193,13 +155,12 @@ export function ExpenseTracker() {
       )}
 
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button type="button" onClick={openAddExpenseForm} style={{ ...PILL_BUTTON, color: '#fff', background: 'var(--ink)', border: 'none' }}>{showForm && !editingExpenseId ? 'Close form' : '+ Add expense'}</button>
+        <button type="button" onClick={() => setShowForm(v => !v)} style={{ ...PILL_BUTTON, color: '#fff', background: 'var(--ink)', border: 'none' }}>{showForm ? 'Close form' : '+ Add expense'}</button>
         <button type="button" onClick={() => setShowLog(v => !v)} style={{ ...PILL_BUTTON, color: 'var(--ink)', background: 'transparent', border: '1px solid var(--border)' }}>{showLog ? 'Hide expense log' : `Show expense log (${expenses.length})`}</button>
         <button type="button" onClick={() => setShowCategories(v => !v)} style={{ ...PILL_BUTTON, color: 'var(--ink)', background: 'transparent', border: '1px solid var(--border)' }}>{showCategories ? 'Close categories' : 'Manage categories'}</button>
       </div>
 
-      {showForm && <form onSubmit={handleSaveExpense} style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <p style={{ ...LABEL, margin: 0 }}>{editingExpenseId ? 'Edit expense' : 'New expense'}</p>
+      {showForm && <form onSubmit={handleAddExpense} style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <label style={{ flex: '1 1 120px', ...LABEL }}>Date<input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} style={FIELD_STYLE} required /></label>
           <label style={{ flex: '1 1 120px', ...LABEL }}>Amount (R)<input type="number" min="0.01" step="0.01" value={formAmount} onChange={e => setFormAmount(e.target.value)} style={FIELD_STYLE} required /></label>
@@ -207,10 +168,7 @@ export function ExpenseTracker() {
           <label style={{ flex: '1 1 140px', ...LABEL }}>Account<select value={formAccount} onChange={e => setFormAccount(e.target.value as 'personal' | 'business')} style={FIELD_STYLE}><option value="personal">Personal</option><option value="business">Business</option></select></label>
         </div>
         <label style={LABEL}>Description<input value={formDescription} onChange={e => setFormDescription(e.target.value)} style={FIELD_STYLE} required /></label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button disabled={submitting} style={{ ...PILL_BUTTON, color: '#fff', background: 'var(--ink)', border: 'none' }}>{submitting ? 'Saving…' : editingExpenseId ? 'Save changes' : 'Save expense'}</button>
-          {editingExpenseId && <button type="button" onClick={() => { resetExpenseForm(); setShowForm(false) }} style={{ ...PILL_BUTTON, color: 'var(--ink)', background: 'transparent', border: '1px solid var(--border)' }}>Cancel</button>}
-        </div>
+        <button disabled={submitting} style={{ ...PILL_BUTTON, alignSelf: 'flex-start', color: '#fff', background: 'var(--ink)', border: 'none' }}>{submitting ? 'Saving…' : 'Save expense'}</button>
       </form>}
 
       {showCategories && <div style={{ marginTop: 20, padding: 18, background: 'rgba(44,42,37,0.035)', borderRadius: 'var(--radius-md)' }}>
@@ -229,7 +187,7 @@ export function ExpenseTracker() {
         </div>
         <div style={{ overflowX: 'auto' }}>
           {logExpenses.length === 0 ? <p style={{ color: 'var(--ink-muted)', fontSize: '0.78rem', fontStyle: 'italic', padding: '14px 0' }}>No {logAccount} expenses this month.</p> : <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}><thead><tr>{['Date', 'Category', 'Description', 'Amount', ''].map((h, i) => <th key={i} style={{ ...LABEL, textAlign: i === 3 ? 'right' : 'left', padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>{h}</th>)}</tr></thead>
-            <tbody>{logExpenses.map(e => <tr key={e.id}><td style={cellStyle}>{format(new Date(`${e.date}T00:00:00`), 'dd MMM yyyy')}</td><td style={cellStyle}><i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 8, background: colorFor(e.category), marginRight: 6 }} />{e.category}</td><td style={cellStyle}>{e.description}</td><td style={{ ...cellStyle, textAlign: 'right' }}>R {Number(e.amount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td><td style={{ ...cellStyle, whiteSpace: 'nowrap' }}><button type="button" onClick={() => openEditExpenseForm(e)} aria-label={`Edit ${e.description}`} style={{ border: 0, background: 'transparent', color: 'var(--ink)', cursor: 'pointer', marginRight: 10 }}>Edit</button><button type="button" onClick={() => handleDeleteExpense(e.id, e.description)} aria-label={`Delete ${e.description}`} style={{ border: 0, background: 'transparent', color: 'var(--clay)', cursor: 'pointer' }}>Delete</button></td></tr>)}</tbody>
+            <tbody>{logExpenses.map(e => <tr key={e.id}><td style={cellStyle}>{format(new Date(`${e.date}T00:00:00`), 'dd MMM yyyy')}</td><td style={cellStyle}><i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 8, background: colorFor(e.category), marginRight: 6 }} />{e.category}</td><td style={cellStyle}>{e.description}</td><td style={{ ...cellStyle, textAlign: 'right' }}>R {Number(e.amount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td><td style={cellStyle}><button type="button" onClick={() => handleDeleteExpense(e.id, e.description)} aria-label={`Delete ${e.description}`} style={{ border: 0, background: 'transparent', color: 'var(--clay)', cursor: 'pointer' }}>Delete</button></td></tr>)}</tbody>
           </table>}
         </div>
       </div>}
