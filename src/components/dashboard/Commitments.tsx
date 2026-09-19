@@ -1,6 +1,18 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { format, isToday, isTomorrow, startOfDay, addDays } from 'date-fns'
+import {
+  addMonths,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isSameDay,
+  isSameMonth,
+  isToday,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
+} from 'date-fns'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 
@@ -193,7 +205,15 @@ function CommitmentRow({ item, onSelect }: { item: Commitment; onSelect: (c: Com
 
 // ── Detail / Edit Modal ────────────────────────────────────────────────────────
 
-function CommitmentDetail({ item, onClose }: { item: Commitment | 'new'; onClose: () => void }) {
+function CommitmentDetail({
+  item,
+  initialDate,
+  onClose,
+}: {
+  item: Commitment | 'new'
+  initialDate?: Date
+  onClose: () => void
+}) {
   const isNew = item === 'new'
   const addCommitment = useAddCommitment()
   const updateCommitment = useUpdateCommitment()
@@ -201,7 +221,11 @@ function CommitmentDetail({ item, onClose }: { item: Commitment | 'new'; onClose
 
   const [title, setTitle] = useState(isNew ? '' : item.title)
   const [description, setDescription] = useState(isNew ? '' : (item.description ?? ''))
-  const [date, setDate] = useState(isNew ? format(new Date(), 'yyyy-MM-dd') : format(new Date(item.starts_at), 'yyyy-MM-dd'))
+  const [date, setDate] = useState(
+    isNew
+      ? format(initialDate ?? new Date(), 'yyyy-MM-dd')
+      : format(new Date(item.starts_at), 'yyyy-MM-dd'),
+  )
   const [time, setTime] = useState(isNew ? '09:00' : (item.all_day ? '09:00' : format(new Date(item.starts_at), 'HH:mm')))
   const [endTime, setEndTime] = useState(isNew || !item.ends_at ? '' : format(new Date(item.ends_at), 'HH:mm'))
   const [allDay, setAllDay] = useState(isNew ? false : item.all_day)
@@ -407,41 +431,91 @@ function CommitmentDetail({ item, onClose }: { item: Commitment | 'new'; onClose
   )
 }
 
+// ── Calendar ──────────────────────────────────────────────────────────────────
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+/** A compact event label that keeps the month view readable at narrow widths. */
+function CalendarEvent({ item, onSelect }: { item: Commitment; onSelect: (c: Commitment) => void }) {
+  const cfg = PRIORITY_CONFIG[item.priority]
+  const time = item.all_day ? '' : format(new Date(item.starts_at), 'HH:mm')
+
+  return (
+    <button
+      onClick={event => {
+        event.stopPropagation()
+        onSelect(item)
+      }}
+      title={`${time ? `${time} · ` : ''}${item.title}`}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+        width: '100%',
+        minWidth: 0,
+        border: 'none',
+        borderRadius: '4px',
+        padding: '3px 5px',
+        background: cfg.bg,
+        color: cfg.color,
+        cursor: 'pointer',
+        fontFamily: 'var(--font-body)',
+        fontSize: '0.58rem',
+        lineHeight: 1.25,
+        textAlign: 'left',
+      }}
+    >
+      <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: cfg.color, flexShrink: 0 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {time && <strong style={{ fontWeight: 500 }}>{time} </strong>}
+        {item.title}
+      </span>
+    </button>
+  )
+}
+
 // ── Main Panel ─────────────────────────────────────────────────────────────────
 
 export default function Commitments() {
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState<Commitment | 'new' | null>(null)
-  const { data: items = [] } = useCommitments()
+  const [visibleMonth, setVisibleMonth] = useState(startOfMonth(new Date()))
+  const [focusedDate, setFocusedDate] = useState(new Date())
+  const { data: items = [], isLoading, error } = useCommitments()
 
-  const today = startOfDay(new Date())
-  const tomorrow = addDays(today, 1)
-  const weekEnd = addDays(today, 7)
+  const commitmentsByDay = useMemo(() => {
+    const grouped = new Map<string, Commitment[]>()
+    items.forEach(item => {
+      const key = format(new Date(item.starts_at), 'yyyy-MM-dd')
+      grouped.set(key, [...(grouped.get(key) ?? []), item])
+    })
+    return grouped
+  }, [items])
 
-  const groups: { label: string; rows: Commitment[] }[] = [
-    { label: 'Today',     rows: items.filter(c => isToday(new Date(c.starts_at))) },
-    { label: 'Tomorrow',  rows: items.filter(c => isTomorrow(new Date(c.starts_at))) },
-    {
-      label: 'This week',
-      rows: items.filter(c => {
-        const d = new Date(c.starts_at)
-        return !isToday(d) && !isTomorrow(d) && d >= tomorrow && d < weekEnd
-      }),
-    },
-    {
-      label: 'Later',
-      rows: items.filter(c => new Date(c.starts_at) >= weekEnd),
-    },
-  ].filter(g => g.rows.length > 0)
+  const calendarDays = eachDayOfInterval({
+    start: startOfWeek(startOfMonth(visibleMonth), { weekStartsOn: 1 }),
+    end: endOfWeek(endOfMonth(visibleMonth), { weekStartsOn: 1 }),
+  })
+  const focusedItems = commitmentsByDay.get(format(focusedDate, 'yyyy-MM-dd')) ?? []
+  const upcomingCount = items.filter(item => new Date(item.starts_at) >= new Date()).length
 
-  const upcomingCount = items.filter(c => new Date(c.starts_at) >= new Date()).length
+  const focusToday = () => {
+    const now = new Date()
+    setVisibleMonth(startOfMonth(now))
+    setFocusedDate(now)
+  }
+
+  const openNewForDate = (date: Date) => {
+    setFocusedDate(date)
+    setSelected('new')
+  }
 
   return (
     <>
-      {/* Trigger button — fixed below TopBar, left cluster */}
+      {/* Trigger button — fixed below TopBar, left cluster. */}
       <button
         onClick={() => setOpen(true)}
-        title="Commitments"
+        title="Calendar"
         style={{
           position: 'fixed',
           top: '72px',
@@ -470,9 +544,9 @@ export default function Commitments() {
         {upcomingCount > 0 && (
           <span style={{
             position: 'absolute', top: '-4px', right: '-4px',
-            width: '14px', height: '14px', borderRadius: '50%',
+            minWidth: '14px', height: '14px', borderRadius: '7px', padding: '0 2px',
             background: '#5a7247', border: '2px solid white',
-            fontFamily: 'var(--font-body)', fontSize: '0.5rem', color: 'white',
+            fontFamily: 'var(--font-body)', fontSize: '0.48rem', color: 'white',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             {upcomingCount}
@@ -480,7 +554,7 @@ export default function Commitments() {
         )}
       </button>
 
-      {/* Slide-in panel — anchored left so it never fights the reading list */}
+      {/* Wide slide-in panel: month grid above, selected-day agenda below. */}
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', top: '64px', left: 0, right: 0, bottom: 0, zIndex: 90 }} />
@@ -491,62 +565,169 @@ export default function Commitments() {
               left: 0,
               bottom: 0,
               zIndex: 100,
-              width: '360px',
-              background: 'rgba(248,245,238,0.97)',
+              width: 'min(760px, 100vw)',
+              background: 'rgba(248,245,238,0.98)',
               backdropFilter: 'blur(16px)',
               borderRight: '1px solid rgba(44,42,37,0.08)',
               boxShadow: '8px 0 40px rgba(44,42,37,0.08)',
               display: 'flex',
               flexDirection: 'column',
               overflowY: 'auto',
-              padding: '28px 24px',
+              padding: 'clamp(16px, 3vw, 28px)',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <p style={{ ...LABEL, margin: 0 }}>Commitments</p>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <button
-                  onClick={() => setSelected('new')}
-                  style={{
-                    fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: '#5a7247',
-                    background: 'rgba(90,114,71,0.08)', border: '1px solid rgba(90,114,71,0.2)',
-                    borderRadius: '6px', padding: '4px 12px', cursor: 'pointer',
-                  }}
-                >
-                  + Add
-                </button>
-                <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', color: 'var(--ink-muted)' }}>✕</button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap', marginBottom: '20px' }}>
+              <div>
+                <p style={{ ...LABEL, margin: 0 }}>Calendar</p>
+                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.55rem, 4vw, 2.1rem)', fontWeight: 400, color: 'var(--ink)', margin: '3px 0 0', lineHeight: 1 }}>
+                  {format(visibleMonth, 'MMMM yyyy')}
+                </h2>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button onClick={() => setVisibleMonth(month => subMonths(month, 1))} aria-label="Previous month" style={navButtonStyle}>‹</button>
+                <button onClick={focusToday} style={{ ...navButtonStyle, width: 'auto', padding: '0 12px', fontSize: '0.65rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Today</button>
+                <button onClick={() => setVisibleMonth(month => addMonths(month, 1))} aria-label="Next month" style={navButtonStyle}>›</button>
+                <button onClick={() => openNewForDate(focusedDate)} style={addButtonStyle}>+ Add</button>
+                <button onClick={() => setOpen(false)} aria-label="Close calendar" style={{ ...navButtonStyle, marginLeft: '2px' }}>✕</button>
               </div>
             </div>
 
-            {groups.map(g => (
-              <div key={g.label} style={{ marginBottom: '22px' }}>
-                <p style={{ ...LABEL, marginBottom: '10px' }}>{g.label}</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {g.rows.map(c => <CommitmentRow key={c.id} item={c} onSelect={setSelected} />)}
-                </div>
+            <div style={{ border: '1px solid rgba(44,42,37,0.1)', borderRadius: '14px', overflow: 'hidden', background: 'rgba(255,252,245,0.55)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', borderBottom: '1px solid rgba(44,42,37,0.08)' }}>
+                {WEEKDAYS.map(day => (
+                  <div key={day} style={{ ...LABEL, textAlign: 'center', padding: '8px 2px', fontSize: '0.52rem' }}>{day}</div>
+                ))}
               </div>
-            ))}
 
-            {items.length === 0 && (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', opacity: 0.5 }}>
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="rgba(44,42,37,0.3)" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4.5" width="18" height="16" rx="2.5" />
-                  <path d="M3 9.5h18" />
-                  <path d="M8 2.5v4M16 2.5v4" />
-                </svg>
-                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--ink-muted)', textAlign: 'center' }}>
-                  Nothing booked.<br />Add what you've committed to.
-                </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
+                {calendarDays.map((day, index) => {
+                  const dayItems = commitmentsByDay.get(format(day, 'yyyy-MM-dd')) ?? []
+                  const activeMonth = isSameMonth(day, visibleMonth)
+                  const focused = isSameDay(day, focusedDate)
+                  const today = isToday(day)
+
+                  return (
+                    <div
+                      key={day.toISOString()}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setFocusedDate(day)}
+                      onDoubleClick={() => openNewForDate(day)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setFocusedDate(day)
+                        }
+                      }}
+                      style={{
+                        minWidth: 0,
+                        minHeight: '86px',
+                        padding: '7px 6px',
+                        border: 'none',
+                        borderRight: index % 7 === 6 ? 'none' : '1px solid rgba(44,42,37,0.07)',
+                        borderBottom: index >= calendarDays.length - 7 ? 'none' : '1px solid rgba(44,42,37,0.07)',
+                        background: focused ? 'rgba(90,114,71,0.08)' : 'transparent',
+                        color: activeMonth ? 'var(--ink)' : 'var(--ink-faint)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        verticalAlign: 'top',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <span style={{
+                        width: '22px', height: '22px', borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: today ? 500 : 400,
+                        color: today ? 'white' : 'inherit', background: today ? '#5a7247' : 'transparent',
+                        marginBottom: '4px',
+                      }}>
+                        {format(day, 'd')}
+                      </span>
+
+                      <span style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        {dayItems.slice(0, 2).map(item => (
+                          <CalendarEvent key={item.id} item={item} onSelect={setSelected} />
+                        ))}
+                        {dayItems.length > 2 && (
+                          <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.55rem', color: 'var(--ink-muted)', paddingLeft: '5px' }}>
+                            +{dayItems.length - 2} more
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
-            )}
+            </div>
+
+            <div style={{ marginTop: '22px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                <div>
+                  <p style={{ ...LABEL, margin: 0 }}>Selected day</p>
+                  <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.25rem', fontWeight: 400, color: 'var(--ink)', margin: '2px 0 0' }}>
+                    {format(focusedDate, 'EEEE, d MMMM')}
+                  </p>
+                </div>
+                <button onClick={() => openNewForDate(focusedDate)} style={addButtonStyle}>+ Schedule</button>
+              </div>
+
+              {isLoading && <p style={emptyStateStyle}>Loading commitments…</p>}
+              {error && <p style={{ ...emptyStateStyle, color: '#a05050' }}>Could not load the calendar.</p>}
+              {!isLoading && !error && focusedItems.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {focusedItems.map(item => <CommitmentRow key={item.id} item={item} onSelect={setSelected} />)}
+                </div>
+              )}
+              {!isLoading && !error && focusedItems.length === 0 && (
+                <button onClick={() => openNewForDate(focusedDate)} style={{ ...emptyStateStyle, width: '100%', border: '1px dashed rgba(44,42,37,0.14)', borderRadius: '10px', background: 'transparent', cursor: 'pointer' }}>
+                  Nothing scheduled. Click to add a commitment.
+                </button>
+              )}
+            </div>
           </div>
         </>
       )}
 
       {selected !== null && (
-        <CommitmentDetail item={selected} onClose={() => setSelected(null)} />
+        <CommitmentDetail item={selected} initialDate={focusedDate} onClose={() => setSelected(null)} />
       )}
     </>
   )
+}
+
+const navButtonStyle: CSSProperties = {
+  width: '32px',
+  height: '32px',
+  borderRadius: '8px',
+  border: '1px solid rgba(44,42,37,0.12)',
+  background: 'rgba(255,252,245,0.7)',
+  color: 'var(--ink-muted)',
+  cursor: 'pointer',
+  fontFamily: 'var(--font-body)',
+  fontSize: '1rem',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+}
+
+const addButtonStyle: CSSProperties = {
+  height: '32px',
+  borderRadius: '8px',
+  padding: '0 12px',
+  border: '1px solid rgba(90,114,71,0.2)',
+  background: 'rgba(90,114,71,0.09)',
+  color: '#5a7247',
+  cursor: 'pointer',
+  fontFamily: 'var(--font-body)',
+  fontSize: '0.68rem',
+}
+
+const emptyStateStyle: CSSProperties = {
+  fontFamily: 'var(--font-body)',
+  fontSize: '0.76rem',
+  fontWeight: 300,
+  color: 'var(--ink-muted)',
+  textAlign: 'center',
+  padding: '16px',
 }
