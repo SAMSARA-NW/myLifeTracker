@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import WeeklyDashboard from '../components/dashboard/WeeklyDashboard'
 import ReadingList from '../components/dashboard/ReadingList'
+import Commitments from '../components/dashboard/Commitments'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -8,6 +9,7 @@ export default function Dashboard() {
     <>
       <WeeklyDashboard />
       <ReadingList />
+      <Commitments />
 
       {/* Human Overview button — fixed below TopBar, left side */}
       <button
