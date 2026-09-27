@@ -6,3 +6,7 @@ dist/
 *.log
 .vercel
 .temp/
+
+# Never commit environment files; only the credential-free template is public.
+.env*
+!.env.example

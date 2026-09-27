@@ -9,7 +9,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prebuild": "node scripts/check-client-env.mjs",
+    "predev": "node scripts/check-client-env.mjs",
+    "test:security": "node --test scripts/client-env-security.check.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
