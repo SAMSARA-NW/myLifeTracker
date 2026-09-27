@@ -22,15 +22,6 @@ function statusPill(status: InvoiceStatus): React.CSSProperties {
   }
 }
 
-const FALLBACK_BANK: BankDetails = {
-  id: 'fallback',
-  business: 'samsara',
-  account_name: 'Engineered By Nature',
-  bank_name: 'FNB',
-  account_number: '63145020614',
-  branch_code: '250655',
-}
-
 function generatePDFHtml(invoice: Invoice, bank: BankDetails): string {
   const isSamsara = invoice.business === 'samsara'
   const primary   = isSamsara ? '#c2a66d' : '#1a3d2b'
@@ -160,10 +151,10 @@ export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { data: invoice, isLoading } = useInvoice(id!)
-  const { data: bankDetails } = useBankDetails(invoice?.business ?? 'samsara')
+  const { data: bankDetails, isLoading: bankLoading, refetch: reloadBank } = useBankDetails(invoice?.business ?? 'samsara')
   const updateStatus = useUpdateInvoiceStatus()
 
-  if (isLoading) {
+  if (isLoading || bankLoading) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 32px' }}>
         <p style={{ fontFamily: 'var(--font-body)', fontWeight: 300, color: 'var(--ink-muted)', fontStyle: 'italic' }}>
@@ -189,7 +180,13 @@ export default function InvoiceDetail() {
     )
   }
 
-  const bank = bankDetails ?? { ...FALLBACK_BANK, business: invoice.business }
+  // Do not print an invoice with invented or stale banking information on query failure.
+  if (!bankDetails) return <div style={{ textAlign: 'center', padding: '80px 32px' }}>
+    <p role="alert">Bank details could not be loaded. Please retry before downloading this invoice.</p>
+    <button onClick={() => reloadBank()}>Retry</button>
+    <button onClick={() => navigate('/invoices')}>Back to invoices</button>
+  </div>
+  const bank = bankDetails
   const items = invoice.items ?? []
   const subtotal = items.reduce((s, item) => s + item.line_total, 0)
   const total = subtotal + (invoice.delivery_fee ?? 0)
