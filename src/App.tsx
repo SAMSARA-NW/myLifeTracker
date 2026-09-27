@@ -14,6 +14,7 @@ import Finances from './pages/Finances'
 import HumanOverview from './pages/HumanOverview'
 import Invoices from './pages/Invoices'
 import InvoiceDetail from './components/invoices/InvoiceDetail'
+import BusinessAccess from './components/BusinessAccess'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,15 +37,15 @@ export default function App() {
               <Route path="/projects" element={<Projects />} />
               <Route path="/projects/:id" element={<ProjectDetailPage />} />
               <Route path="/reviews" element={<Reviews />} />
-              <Route path="/business" element={<Business />} />
+              <Route path="/business" element={<BusinessAccess><Business /></BusinessAccess>} />
               <Route path="/journal" element={<Journal />} />
               <Route path="/olive-rehab" element={<OliveRehab />} />
               <Route path="/todos" element={<Todos />} />
               <Route path="/dreams" element={<Dreams />} />
               <Route path="/finances" element={<Finances />} />
               <Route path="/human" element={<HumanOverview />} />
-              <Route path="/invoices" element={<Invoices />} />
-              <Route path="/invoices/:id" element={<InvoiceDetail />} />
+              <Route path="/invoices" element={<BusinessAccess><Invoices /></BusinessAccess>} />
+              <Route path="/invoices/:id" element={<BusinessAccess><InvoiceDetail /></BusinessAccess>} />
             </Routes>
           </div>
         </div>

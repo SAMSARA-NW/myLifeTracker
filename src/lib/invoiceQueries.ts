@@ -76,16 +76,8 @@ export function useBankDetails(business: BusinessType) {
         .select('*')
         .eq('business', business)
         .single()
-      if (error) {
-        return {
-          id: 'fallback',
-          business,
-          account_name: 'Engineered By Nature',
-          bank_name: 'FNB',
-          account_number: '63145020614',
-          branch_code: '250655',
-        } as BankDetails
-      }
+      // Never hide an access failure behind hard-coded financial information.
+      if (error) throw error
       return data as BankDetails
     },
   })
@@ -120,7 +112,7 @@ export function useCreateInvoice() {
     mutationFn: async (payload: CreateInvoicePayload) => {
       // Generate invoice number via RPC
       const { data: invoiceNumber, error: rpcError } = await businessSupabase
-        .rpc('generate_invoice_number', { business: payload.business })
+        .rpc('generate_invoice_number', { biz: payload.business })
       if (rpcError) throw rpcError
 
       // Create invoice
