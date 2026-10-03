@@ -815,6 +815,23 @@ export function useCreateFinAccount() {
   })
 }
 
+export function useDeleteFinAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('fin_accounts')
+        .delete()
+        .eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['fin_accounts'] })
+      qc.invalidateQueries({ queryKey: ['fin_entries'] })
+    },
+  })
+}
+
 // ── EXPENSE TRACKER ───────────────────────────────────────────────────────────
 
 export function useOpsExpenses(month: string) {

@@ -4,7 +4,7 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts'
 import {
-  useFinAccounts, useFinEntries, useUpsertFinEntry, useCreateFinAccount,
+  useFinAccounts, useFinEntries, useUpsertFinEntry, useCreateFinAccount, useDeleteFinAccount,
 } from '../lib/queries'
 import { ExpenseTracker } from '../components/finance/ExpenseTracker'
 import type { FinAccount, FinMonthlyEntry } from '../lib/supabase'
@@ -142,6 +142,7 @@ export default function Finances() {
   const { data: entries = [], isLoading: loadingEntries } = useFinEntries()
   const upsertEntry = useUpsertFinEntry()
   const createAccount = useCreateFinAccount()
+  const deleteAccount = useDeleteFinAccount()
 
   // Entry form state
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'))
@@ -153,6 +154,7 @@ export default function Finances() {
   const [newInvName, setNewInvName] = useState('')
   const [newInvColor, setNewInvColor] = useState<string>('') // '' = auto-pick next unused colour
   const [addingInv, setAddingInv] = useState(false)
+  const [deletingInvId, setDeletingInvId] = useState<string | null>(null)
 
   // Populate form when month or entries change
   const existingForMonth = useMemo(() => {
@@ -226,6 +228,22 @@ export default function Finances() {
       setNewInvColor('')
     } finally {
       setAddingInv(false)
+    }
+  }
+
+  async function handleRemoveInvestment(acc: FinAccount) {
+    const count = entries.filter(e => e.account_id === acc.id).length
+    const msg = count > 0
+      ? `Remove "${acc.name}" and its ${count} monthly entr${count === 1 ? 'y' : 'ies'}? This cannot be undone.`
+      : `Remove "${acc.name}"? This cannot be undone.`
+    if (!window.confirm(msg)) return
+    setDeletingInvId(acc.id)
+    try {
+      await deleteAccount.mutateAsync(acc.id)
+    } catch (err) {
+      window.alert(`Could not remove "${acc.name}": ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setDeletingInvId(null)
     }
   }
 
@@ -497,6 +515,29 @@ export default function Finances() {
                       </span>
                     )
                   })()}
+                  <button
+                    type="button"
+                    title={`Remove ${acc.name}`}
+                    aria-label={`Remove ${acc.name}`}
+                    onClick={() => handleRemoveInvestment(acc)}
+                    disabled={deletingInvId === acc.id}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: deletingInvId === acc.id ? 'wait' : 'pointer',
+                      color: 'var(--ink-muted)',
+                      fontSize: '1rem',
+                      lineHeight: 1,
+                      padding: '2px 4px',
+                      opacity: deletingInvId === acc.id ? 0.4 : 0.6,
+                      transition: 'color 150ms ease, opacity 150ms ease',
+                      flexShrink: 0,
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#a04a4a'; e.currentTarget.style.opacity = '1' }}
+                    onMouseLeave={e => { e.currentTarget.style.color = 'var(--ink-muted)'; e.currentTarget.style.opacity = '0.6' }}
+                  >
+                    {deletingInvId === acc.id ? '…' : '×'}
+                  </button>
                 </div>
               ))}
             </div>
