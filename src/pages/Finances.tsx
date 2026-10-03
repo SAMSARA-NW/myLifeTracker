@@ -7,6 +7,7 @@ import {
   useFinAccounts, useFinEntries, useUpsertFinEntry, useCreateFinAccount,
 } from '../lib/queries'
 import { ExpenseTracker } from '../components/finance/ExpenseTracker'
+import type { FinAccount, FinMonthlyEntry } from '../lib/supabase'
 
 const LABEL: React.CSSProperties = {
   fontFamily: 'var(--font-body)',
@@ -42,12 +43,77 @@ const TOOLTIP_STYLE = {
   },
 }
 
-const PRESET_COLORS = ['#6b5c8a', '#8a6a3a', '#5c7a5c', '#8a4a4a', '#4a6a8a', '#7a6a4a']
+// Expanded palette so every account can get its own distinct line colour.
+const PRESET_COLORS = [
+  '#6b5c8a', '#8a6a3a', '#5c7a5c', '#8a4a4a', '#4a6a8a', '#7a6a4a',
+  '#7a4a6a', '#4a8a7a', '#8a7a4a', '#4a5a8a', '#8a5a4a', '#5a8a4a',
+  '#8a4a7a', '#2f6f6f', '#a06a2a', '#6a4a8a', '#3d6b9a', '#9a3d5c',
+  '#7d7d3d', '#4a7a9a',
+]
 
 function formatMonthLabel(yyyymm: string): string {
   const [y, m] = yyyymm.split('-')
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   return `${months[parseInt(m, 10) - 1]} ${y.slice(2)}`
+}
+
+// Pick a colour not yet used by any account, so new lines stay visually distinct.
+function nextUnusedColor(used: string[]): string {
+  const free = PRESET_COLORS.find(c => !used.includes(c))
+  if (free) return free
+  const hue = Math.round((used.length * 137.508) % 360)
+  return `hsl(${hue}, 38%, 42%)`
+}
+
+function safeHex(color: string): string {
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#6b5c8a'
+}
+
+// Lifetime growth: first recorded balance -> latest recorded balance.
+function lifetimeGrowthPct(entryList: FinMonthlyEntry[], accountId: string): number | null {
+  const rows = entryList
+    .filter(e => e.account_id === accountId)
+    .sort((a, b) => a.month.localeCompare(b.month))
+  if (rows.length < 2) return null
+  const first = Number(rows[0].amount_zar)
+  const last = Number(rows[rows.length - 1].amount_zar)
+  if (!first) return null
+  return ((last - first) / Math.abs(first)) * 100
+}
+
+// Tooltip that lists series highest -> lowest, matching the graph top -> bottom.
+function ChartTooltip({ active, payload, label, accounts }: {
+  active?: boolean
+  payload?: Array<{ dataKey: string; value: number; color?: string }>
+  label?: string
+  accounts: FinAccount[]
+}) {
+  if (!active || !payload || payload.length === 0) return null
+  const rows = [...payload].sort((a, b) => Number(b.value) - Number(a.value))
+  return (
+    <div style={TOOLTIP_STYLE.contentStyle}>
+      <p style={{ ...LABEL, marginBottom: '8px' }}>{label}</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {rows.map(p => {
+          const isNet = p.dataKey === 'net_worth'
+          const acc = accounts.find(a => a.id === p.dataKey)
+          const color = isNet ? '#2c2a25' : (acc?.color ?? p.color)
+          const name = isNet ? 'Net Worth' : (acc?.name ?? p.dataKey)
+          return (
+            <div key={p.dataKey} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color }} />
+                {name}
+              </span>
+              <span style={{ fontWeight: 400 }}>
+                R {Number(p.value).toLocaleString('en-ZA', { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export default function Finances() {
@@ -64,7 +130,7 @@ export default function Finances() {
 
   // Investment form state
   const [newInvName, setNewInvName] = useState('')
-  const [newInvColor, setNewInvColor] = useState(PRESET_COLORS[0])
+  const [newInvColor, setNewInvColor] = useState<string>('') // '' = auto-pick next unused colour
   const [addingInv, setAddingInv] = useState(false)
 
   // Populate form when month or entries change
@@ -98,6 +164,7 @@ export default function Finances() {
   }, [accounts, entries])
 
   const investmentAccounts = accounts.filter(a => a.type === 'investment')
+  const effectiveInvColor = newInvColor || nextUnusedColor(accounts.map(a => a.color))
   const loading = loadingAccounts || loadingEntries
 
   // Handlers
@@ -131,11 +198,11 @@ export default function Finances() {
       await createAccount.mutateAsync({
         name: newInvName.trim(),
         type: 'investment',
-        color: newInvColor,
+        color: newInvColor || nextUnusedColor(accounts.map(a => a.color)),
         active: true,
       })
       setNewInvName('')
-      setNewInvColor(PRESET_COLORS[0])
+      setNewInvColor('')
     } finally {
       setAddingInv(false)
     }
@@ -156,6 +223,17 @@ export default function Finances() {
   const latestNetWorth = latestMonth
     ? entries.filter(e => e.month === latestMonth).reduce((s, e) => s + Number(e.amount_zar), 0)
     : null
+
+  // Order chart lines + legend by latest balance (top -> bottom) for an intuitive read.
+  const chartAccounts = useMemo(() => {
+    const latestValue = (id: string) => {
+      const rows = entries.filter(e => e.account_id === id)
+      if (rows.length === 0) return -Infinity
+      const latest = rows.reduce((m, e) => (e.month > m.month ? e : m), rows[0])
+      return Number(latest.amount_zar)
+    }
+    return [...accounts].sort((a, b) => latestValue(b.id) - latestValue(a.id))
+  }, [accounts, entries])
 
   return (
     <div className="animate-in" style={{ maxWidth: '1100px', margin: '0 auto', padding: '48px 40px 80px' }}>
@@ -236,14 +314,7 @@ export default function Finances() {
                 tickLine={false}
                 tickFormatter={v => `R${(v / 1000).toFixed(0)}k`}
               />
-              <Tooltip
-                {...TOOLTIP_STYLE}
-                formatter={(v: number, name: string) => {
-                  const acc = accounts.find(a => a.id === name)
-                  const label = name === 'net_worth' ? 'Net Worth' : (acc?.name ?? name)
-                  return [`R ${v.toLocaleString('en-ZA', { maximumFractionDigits: 0 })}`, label]
-                }}
-              />
+              <Tooltip content={<ChartTooltip accounts={accounts} />} />
               <Legend
                 formatter={(value: string) => {
                   const acc = accounts.find(a => a.id === value)
@@ -251,8 +322,8 @@ export default function Finances() {
                 }}
                 wrapperStyle={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--ink-muted)' }}
               />
-              {/* Individual account lines */}
-              {accounts.map(acc => (
+              {/* Individual account lines (ordered by latest balance) */}
+              {chartAccounts.map(acc => (
                 <Line
                   key={acc.id}
                   type="monotone"
@@ -392,16 +463,35 @@ export default function Finances() {
                   <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.875rem', fontWeight: 300, color: 'var(--ink)', flex: 1 }}>
                     {acc.name}
                   </span>
-                  {/* Latest balance */}
+                  {/* Latest balance + lifetime growth */}
                   {(() => {
                     const latest = [...entries].filter(e => e.account_id === acc.id).sort((a, b) => b.month.localeCompare(a.month))[0]
-                    return latest ? (
-                      <span style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 300, color: acc.color }}>
-                        R {Number(latest.amount_zar).toLocaleString('en-ZA', { maximumFractionDigits: 0 })}
-                      </span>
-                    ) : (
-                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--ink-muted)' }}>
-                        No data
+                    if (!latest) {
+                      return (
+                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--ink-muted)' }}>
+                          No data
+                        </span>
+                      )
+                    }
+                    const pct = lifetimeGrowthPct(entries, acc.id)
+                    return (
+                      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '8px' }}>
+                        <span style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 300, color: acc.color }}>
+                          R {Number(latest.amount_zar).toLocaleString('en-ZA', { maximumFractionDigits: 0 })}
+                        </span>
+                        {pct !== null && (
+                          <span
+                            title="Lifetime growth (first to latest balance)"
+                            style={{
+                              fontFamily: 'var(--font-body)',
+                              fontSize: '0.72rem',
+                              fontWeight: 400,
+                              color: pct >= 0 ? 'var(--foundation)' : '#a04a4a',
+                            }}
+                          >
+                            {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
+                          </span>
+                        )}
                       </span>
                     )
                   })()}
@@ -438,25 +528,55 @@ export default function Finances() {
               </div>
               <div>
                 <label style={{ ...LABEL, display: 'block', marginBottom: '8px' }}>Color</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
                   {PRESET_COLORS.map(c => (
                     <button
                       key={c}
                       type="button"
                       onClick={() => setNewInvColor(c)}
                       style={{
-                        width: 28,
-                        height: 28,
+                        width: 26,
+                        height: 26,
                         borderRadius: '50%',
                         background: c,
-                        border: newInvColor === c ? '2px solid var(--ink)' : '2px solid transparent',
+                        border: effectiveInvColor === c ? '2px solid var(--ink)' : '2px solid transparent',
                         cursor: 'pointer',
                         transition: 'border-color 150ms ease',
                         outline: 'none',
                       }}
                     />
                   ))}
+                  <label
+                    title="Custom colour"
+                    style={{
+                      position: 'relative',
+                      width: 26,
+                      height: 26,
+                      borderRadius: '50%',
+                      overflow: 'hidden',
+                      cursor: 'pointer',
+                      border: '1px dashed var(--border)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontFamily: 'var(--font-body)',
+                      fontSize: '0.85rem',
+                      color: 'var(--ink-muted)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    +
+                    <input
+                      type="color"
+                      value={safeHex(effectiveInvColor)}
+                      onChange={e => setNewInvColor(e.target.value)}
+                      style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+                    />
+                  </label>
                 </div>
+                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--ink-muted)', marginTop: '8px' }}>
+                  New investments default to the next unused colour.
+                </p>
               </div>
               <button
                 type="submit"
