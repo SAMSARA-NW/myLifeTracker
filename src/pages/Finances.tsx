@@ -69,26 +69,39 @@ function safeHex(color: string): string {
   return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#6b5c8a'
 }
 
-// Lifetime growth: first recorded balance -> latest recorded balance.
-function lifetimeGrowthPct(entryList: FinMonthlyEntry[], accountId: string): number | null {
-  const rows = entryList
-    .filter(e => e.account_id === accountId)
-    .sort((a, b) => a.month.localeCompare(b.month))
-  if (rows.length < 2) return null
-  const first = Number(rows[0].amount_zar)
-  const last = Number(rows[rows.length - 1].amount_zar)
-  if (!first) return null
-  return ((last - first) / Math.abs(first)) * 100
+// Growth from a series' first recorded balance to the given balance.
+function growthPctFrom(first: number | null | undefined, current: number): number | null {
+  if (first === null || first === undefined || first === 0) return null
+  return ((current - first) / Math.abs(first)) * 100
 }
 
-// Tooltip that lists series highest -> lowest, matching the graph top -> bottom.
-function ChartTooltip({ active, payload, label, accounts }: {
+// Tooltip that lists series highest -> lowest (matching the graph top -> bottom),
+// with each series' growth from its first recorded balance for the hovered month.
+function ChartTooltip({ active, payload, label, accounts, entries }: {
   active?: boolean
   payload?: Array<{ dataKey: string; value: number; color?: string }>
   label?: string
   accounts: FinAccount[]
+  entries: FinMonthlyEntry[]
 }) {
   if (!active || !payload || payload.length === 0) return null
+
+  // First recorded balance per series = the lifetime starting point.
+  const firstByAccount: Record<string, number | null> = {}
+  accounts.forEach(a => {
+    const rows = entries
+      .filter(e => e.account_id === a.id)
+      .sort((x, y) => x.month.localeCompare(y.month))
+    firstByAccount[a.id] = rows.length ? Number(rows[0].amount_zar) : null
+  })
+  const months = [...new Set(entries.map(e => e.month))].sort()
+  const netFirst = months.length
+    ? accounts.reduce((sum, a) => {
+        const e = entries.find(x => x.account_id === a.id && x.month === months[0])
+        return sum + (e ? Number(e.amount_zar) : 0)
+      }, 0)
+    : null
+
   const rows = [...payload].sort((a, b) => Number(b.value) - Number(a.value))
   return (
     <div style={TOOLTIP_STYLE.contentStyle}>
@@ -99,14 +112,22 @@ function ChartTooltip({ active, payload, label, accounts }: {
           const acc = accounts.find(a => a.id === p.dataKey)
           const color = isNet ? '#2c2a25' : (acc?.color ?? p.color)
           const name = isNet ? 'Net Worth' : (acc?.name ?? p.dataKey)
+          const pct = growthPctFrom(isNet ? netFirst : firstByAccount[p.dataKey], Number(p.value))
           return (
             <div key={p.dataKey} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color }} />
                 {name}
               </span>
-              <span style={{ fontWeight: 400 }}>
-                R {Number(p.value).toLocaleString('en-ZA', { maximumFractionDigits: 0 })}
+              <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '8px' }}>
+                <span style={{ fontWeight: 400 }}>
+                  R {Number(p.value).toLocaleString('en-ZA', { maximumFractionDigits: 0 })}
+                </span>
+                {pct !== null && (
+                  <span style={{ fontWeight: 400, color: pct >= 0 ? 'var(--foundation)' : '#a04a4a' }}>
+                    {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
+                  </span>
+                )}
               </span>
             </div>
           )
@@ -314,7 +335,7 @@ export default function Finances() {
                 tickLine={false}
                 tickFormatter={v => `R${(v / 1000).toFixed(0)}k`}
               />
-              <Tooltip content={<ChartTooltip accounts={accounts} />} />
+              <Tooltip content={<ChartTooltip accounts={accounts} entries={entries} />} />
               <Legend
                 formatter={(value: string) => {
                   const acc = accounts.find(a => a.id === value)
@@ -463,35 +484,16 @@ export default function Finances() {
                   <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.875rem', fontWeight: 300, color: 'var(--ink)', flex: 1 }}>
                     {acc.name}
                   </span>
-                  {/* Latest balance + lifetime growth */}
+                  {/* Latest balance */}
                   {(() => {
                     const latest = [...entries].filter(e => e.account_id === acc.id).sort((a, b) => b.month.localeCompare(a.month))[0]
-                    if (!latest) {
-                      return (
-                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--ink-muted)' }}>
-                          No data
-                        </span>
-                      )
-                    }
-                    const pct = lifetimeGrowthPct(entries, acc.id)
-                    return (
-                      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '8px' }}>
-                        <span style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 300, color: acc.color }}>
-                          R {Number(latest.amount_zar).toLocaleString('en-ZA', { maximumFractionDigits: 0 })}
-                        </span>
-                        {pct !== null && (
-                          <span
-                            title="Lifetime growth (first to latest balance)"
-                            style={{
-                              fontFamily: 'var(--font-body)',
-                              fontSize: '0.72rem',
-                              fontWeight: 400,
-                              color: pct >= 0 ? 'var(--foundation)' : '#a04a4a',
-                            }}
-                          >
-                            {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
-                          </span>
-                        )}
+                    return latest ? (
+                      <span style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 300, color: acc.color }}>
+                        R {Number(latest.amount_zar).toLocaleString('en-ZA', { maximumFractionDigits: 0 })}
+                      </span>
+                    ) : (
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--ink-muted)' }}>
+                        No data
                       </span>
                     )
                   })()}
